@@ -12,6 +12,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"github.com/yourusername/discord-referral-bot/suggestion"
 )
 
 var (
@@ -117,6 +118,7 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 
 	fmt.Printf("Command received: '%s' with args: %v\n", command, args)
 
+	suggestionService := suggestion.NewSuggestionService(usersCollection, ctx)
 
 
 	// Handle commands
@@ -129,8 +131,8 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		handleFindReferrer(s, m, args)
 	case "ping":
 		s.ChannelMessageSend(m.ChannelID, "Pong! Bot is working.")
-	// case "suggestion":
-	// 	suggestionService.HandleSuggestionCommand(s, m, args)
+	case "suggestion":
+		suggestionService.HandleSuggestionCommand(s, m, args)
 	case "help":
 		helpMessage := "Available commands:\n" +
 			"!register <role> <company> - Register your info\n" +
