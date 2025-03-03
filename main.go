@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"strconv"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/joho/godotenv"
@@ -13,12 +14,14 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"github.com/yourusername/discord-referral-bot/suggestion"
+	"github.com/yourusername/discord-referral-bot/ai_service"
 )
 
 var (
 	mongoClient           *mongo.Client
 	usersCollection       *mongo.Collection
 	connectionsCollection *mongo.Collection
+	ratingsCollection     *mongo.Collection
 	ctx                   context.Context
 )
 
@@ -53,6 +56,7 @@ func main() {
 	db := mongoClient.Database("referral_db")
 	usersCollection = db.Collection("users")
 	connectionsCollection = db.Collection("connections")
+	ratingsCollection = db.Collection("ratings")
 
 	// Create Discord bot with proper intents
 	botToken := os.Getenv("BOT_TOKEN")
@@ -133,6 +137,10 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 		s.ChannelMessageSend(m.ChannelID, "Pong! Bot is working.")
 	case "suggestion":
 		suggestionService.HandleSuggestionCommand(s, m, args)
+	case "rate_referrer":
+		handleRateReferrer(s, m, args)
+	case "refer_message":
+		handleReferMessage(s, m, args)	
 	case "help":
 		helpMessage := "Available commands:\n" +
 			"!register <role> <company> - Register your info\n" +
@@ -140,7 +148,8 @@ func messageCreate(s *discordgo.Session, m *discordgo.MessageCreate) {
 			"!find_referrer <company> - Find referrers\n" +
 			"!ping - Check bot status\n" +
 			"!suggestion <your text> - Send a suggestion\n" +
-			"!help - Show this help message"
+			"!help - Show this help message\n" +
+			"!rate_referrer - Leave feedback rating\n"
 		s.ChannelMessageSend(m.ChannelID, helpMessage)
 	default:
 		s.ChannelMessageSend(m.ChannelID, "Unknown command. Type !help for available commands.")
@@ -184,39 +193,123 @@ func handleConnect(s *discordgo.Session, m *discordgo.MessageCreate, args []stri
 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("🔗 %s is now connected to %s", user1, user2))
 }
 
-func handleFindReferrer(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
-	if len(args) < 1 {
-		s.ChannelMessageSend(m.ChannelID, "❌ Usage: !find_referrer <company>")
-		return
-	}
+// func handleFindReferrer(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+// 	if len(args) < 1 {
+// 		s.ChannelMessageSend(m.ChannelID, "❌ Usage: !find_referrer <company>")
+// 		return
+// 	}
 
-	company := args[0]
-	username := m.Author.Username
+// 	company := args[0]
+// 	username := m.Author.Username
 
-	userDetails, err := getUserDetails(username)
-	if err != nil {
-		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ Error getting user details: %v", err))
-		return
-	}
+// 	userDetails, err := getUserDetails(username)
+// 	if err != nil {
+// 		s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ Error getting user details: %v", err))
+// 		return
+// 	}
 
-	if userDetails == nil {
-		s.ChannelMessageSend(m.ChannelID, "❌ You need to register first! Use !register <role> <company>")
-		return
-	}
+// 	if userDetails == nil {
+// 		s.ChannelMessageSend(m.ChannelID, "❌ You need to register first! Use !register <role> <company>")
+// 		return
+// 	}
 
-	referrer, err := findBestReferrer(username, company)
-	if err != nil {
-		s.ChannelMessageSend(m.ChannelID, "❌ No referrer found. Try expanding your network with !connect.")
-		return
-	}
+// 	referrer, err := findBestReferrer(username, company)
+// 	if err != nil {
+// 		s.ChannelMessageSend(m.ChannelID, "❌ No referrer found. Try expanding your network with !connect.")
+// 		return
+// 	}
 
-	if referrer == "" {
-		s.ChannelMessageSend(m.ChannelID, "❌ No referrer found. Try expanding your network with !connect.")
-		return
-	}
+// 	if referrer == "" {
+// 		s.ChannelMessageSend(m.ChannelID, "❌ No referrer found. Try expanding your network with !connect.")
+// 		return
+// 	}
 
-	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ %s can refer you for a job at %s!", referrer, company))
-}
+// 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ %s can refer you for a job at %s!", referrer, company))
+// }
+
+// func handleFindReferrer(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+// 	if len(args) < 1 {
+// 		s.ChannelMessageSend(m.ChannelID, "❌ Usage: !find_referrer <company>")
+// 		return
+// 	}
+
+// 	company := args[0]
+// 	username := m.Author.Username
+
+// 	referrer, err := findBestReferrer(username, company)
+// 	if err != nil {
+// 		s.ChannelMessageSend(m.ChannelID, "❌ No referrer found. Try expanding your network with !connect.")
+// 		return
+// 	}
+
+// 	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ %s can refer you for a job at %s!", referrer, company))
+// }
+
+// HITS Algorithm for Finding the Best Referrer
+// func findBestReferrer(username, targetCompany string) (string, error) {
+// 	connections, err := getConnections()
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	graph := make(map[string][]string)
+// 	for _, conn := range connections {
+// 		user1 := conn["user1"].(string)
+// 		user2 := conn["user2"].(string)
+// 		graph[user1] = append(graph[user1], user2)
+// 		graph[user2] = append(graph[user2], user1)
+// 	}
+
+// 	hubScores := make(map[string]float64)
+// 	authScores := make(map[string]float64)
+
+// 	for user := range graph {
+// 		hubScores[user] = 1.0
+// 		authScores[user] = 1.0
+// 	}
+
+// 	iterations := 10
+// 	for i := 0; i < iterations; i++ {
+// 		newAuthScores := make(map[string]float64)
+// 		newHubScores := make(map[string]float64)
+
+// 		for user := range graph {
+// 			newAuthScores[user] = 0.0
+// 			for _, neighbor := range graph[user] {
+// 				newAuthScores[user] += hubScores[neighbor]
+// 			}
+// 		}
+
+// 		for user := range graph {
+// 			newHubScores[user] = 0.0
+// 			for _, neighbor := range graph[user] {
+// 				newHubScores[user] += newAuthScores[neighbor]
+// 			}
+// 		}
+
+// 		hubScores = newHubScores
+// 		authScores = newAuthScores
+// 	}
+
+// 	var bestReferrer string
+// 	maxAuthScore := -1.0
+
+// 	for user, score := range authScores {
+// 		userDetails, _ := getUserDetails(user)
+// 		if userDetails != nil && userDetails["company"].(string) == targetCompany {
+// 			if score > maxAuthScore {
+// 				maxAuthScore = score
+// 				bestReferrer = user
+// 			}
+// 		}
+// 	}
+
+// 	if bestReferrer == "" {
+// 		return "", fmt.Errorf("no referrer found")
+// 	}
+
+// 	return bestReferrer, nil
+// }
 
 // Database functions
 func registerUser(username, role, company string) error {
@@ -316,54 +409,192 @@ func getAllUsers() ([]map[string]interface{}, error) {
 }
 
 // Simplified find referrer function directly in main.go
+// func findBestReferrer(username, targetCompany string) (string, error) {
+// 	// Get all connections
+// 	connections, err := getConnections()
+// 	if err != nil {
+// 		return "", err
+// 	}
+
+// 	// Build a simple adjacency list for the graph
+// 	graph := make(map[string][]string)
+// 	for _, conn := range connections {
+// 		user1 := conn["user1"].(string)
+// 		user2 := conn["user2"].(string)
+
+// 		// Add both directions since it's an undirected graph
+// 		graph[user1] = append(graph[user1], user2)
+// 		graph[user2] = append(graph[user2], user1)
+// 	}
+
+// 	// BFS to find a referrer
+// 	visited := make(map[string]bool)
+// 	queue := []string{username}
+// 	visited[username] = true
+
+// 	for len(queue) > 0 {
+// 		currentUser := queue[0]
+// 		queue = queue[1:]
+
+// 		// Skip self
+// 		if currentUser != username {
+// 			userDetails, err := getUserDetails(currentUser)
+// 			if err != nil {
+// 				return "", err
+// 			}
+
+// 			// Check if this user is at the target company
+// 			if userDetails != nil && userDetails["company"].(string) == targetCompany {
+// 				return currentUser, nil // Found a referrer!
+// 			}
+// 		}
+
+// 		// Add neighbors to the queue
+// 		for _, neighbor := range graph[currentUser] {
+// 			if !visited[neighbor] {
+// 				visited[neighbor] = true
+// 				queue = append(queue, neighbor)
+// 			}
+// 		}
+// 	}
+
+// 	return "", fmt.Errorf("no referrer found")
+// }
+
+
+
+//////////newwwwwwwwwwwwwwww
+
+var rolePriority = map[string]int{
+	"Manager": 5,
+	"SDE3": 4,
+	"SDE2": 3,
+	"SDE1": 2,
+	"Others": 1,
+}
+
+func handleRateReferrer(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+	if len(args) < 2 {
+		s.ChannelMessageSend(m.ChannelID, "❌ Usage: !rate_referrer <username> <score>")
+		return
+	}
+
+	username := args[0]
+	score, err := strconv.Atoi(args[1])
+	if err != nil || score < 1 || score > 5 {
+		s.ChannelMessageSend(m.ChannelID, "❌ Score must be a number between 1 and 5.")
+		return
+	}
+
+	var user bson.M
+	err = usersCollection.FindOne(ctx, bson.M{"name": username}).Decode(&user)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "❌ User not found.")
+		return
+	}
+
+	_, err = ratingsCollection.InsertOne(ctx, bson.M{"user_id": user["_id"], "score": score})
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "❌ Failed to rate user.")
+		return
+	}
+
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ Successfully rated %s!", username))
+}
+
+func handleFindReferrer(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+	if len(args) < 1 {
+		s.ChannelMessageSend(m.ChannelID, "❌ Usage: !find_referrer <company>")
+		return
+	}
+
+	company := args[0]
+	username := m.Author.Username
+
+	referrer, err := findBestReferrer(username, company)
+	if err != nil {
+		s.ChannelMessageSend(m.ChannelID, "❌ No referrer found.")
+		return
+	}
+
+	s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✅ %s is the best referrer for %s!", referrer, company))
+}
+
 func findBestReferrer(username, targetCompany string) (string, error) {
-	// Get all connections
 	connections, err := getConnections()
 	if err != nil {
 		return "", err
 	}
 
-	// Build a simple adjacency list for the graph
 	graph := make(map[string][]string)
 	for _, conn := range connections {
 		user1 := conn["user1"].(string)
 		user2 := conn["user2"].(string)
-
-		// Add both directions since it's an undirected graph
 		graph[user1] = append(graph[user1], user2)
 		graph[user2] = append(graph[user2], user1)
 	}
 
-	// BFS to find a referrer
-	visited := make(map[string]bool)
-	queue := []string{username}
-	visited[username] = true
+	hubScores := make(map[string]float64)
+	authScores := make(map[string]float64)
+	for user := range graph {
+		hubScores[user] = 1.0
+		authScores[user] = 1.0
+	}
 
-	for len(queue) > 0 {
-		currentUser := queue[0]
-		queue = queue[1:]
-
-		// Skip self
-		if currentUser != username {
-			userDetails, err := getUserDetails(currentUser)
-			if err != nil {
-				return "", err
-			}
-
-			// Check if this user is at the target company
-			if userDetails != nil && userDetails["company"].(string) == targetCompany {
-				return currentUser, nil // Found a referrer!
+	for i := 0; i < 10; i++ {
+		newAuthScores := make(map[string]float64)
+		newHubScores := make(map[string]float64)
+		for user := range graph {
+			newAuthScores[user] = 0.0
+			for _, neighbor := range graph[user] {
+				newAuthScores[user] += hubScores[neighbor]
 			}
 		}
+		for user := range graph {
+			newHubScores[user] = 0.0
+			for _, neighbor := range graph[user] {
+				newHubScores[user] += newAuthScores[neighbor]
+			}
+		}
+		hubScores = newHubScores
+		authScores = newAuthScores
+	}
 
-		// Add neighbors to the queue
-		for _, neighbor := range graph[currentUser] {
-			if !visited[neighbor] {
-				visited[neighbor] = true
-				queue = append(queue, neighbor)
+	var bestReferrer string
+	maxScore := -1.0
+	for user, score := range authScores {
+		userDetails, _ := getUserDetails(user)
+		if userDetails != nil && userDetails["company"].(string) == targetCompany {
+			if score > maxScore || (score == maxScore && rolePriority[userDetails["role"].(string)] > rolePriority[bestReferrer]) {
+				maxScore = score
+				bestReferrer = user
 			}
 		}
 	}
 
-	return "", fmt.Errorf("no referrer found")
+	if bestReferrer == "" {
+		return "", fmt.Errorf("no referrer found")
+	}
+
+	return bestReferrer, nil
+}
+
+func handleReferMessage(s *discordgo.Session, m *discordgo.MessageCreate, args []string) {
+    if len(args) < 3 {
+        s.ChannelMessageSend(m.ChannelID, "❌ Usage: !refer_message <referrer> <role> <company>")
+        return
+    }
+
+    requester := m.Author.Username
+    referrer := args[0]
+    role := args[1]
+    company := strings.Join(args[2:], " ") // Supports multi-word company names
+
+    message, err := ai_service.GenerateReferralMessage(requester, referrer, role, company)
+    if err != nil {
+        s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("❌ Error generating referral message: %v", err))
+        return
+    }
+
+    s.ChannelMessageSend(m.ChannelID, fmt.Sprintf("✉️ Here is your referral message:\n%s", message))
 }
