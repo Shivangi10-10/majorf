@@ -1,0 +1,40 @@
+<!-- web/index.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Referral Network</title>
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <style>
+    #network {
+      width: 100%;
+      height: 100vh;
+      border: 1px solid lightgray;
+    }
+    .vis-tooltip {
+      white-space: pre-line; /* Interpret \n as line breaks */
+    }
+  </style>
+</head>
+<body>
+  <div id="network"></div>
+  <script>
+    async function drawGraph() {
+      const res = await fetch('/api/graph');
+      const data = await res.json();
+
+      const nodes = new vis.DataSet(data.nodes);
+      const edges = new vis.DataSet(data.edges);
+
+      const container = document.getElementById('network');
+      const tooltip = document.getElementById('tooltip');
+      const network = new vis.Network(container, { nodes, edges }, {
+        nodes: { shape: 'dot', size: 16 },
+        physics: { stabilization: false },
+        interaction: { hover: true }
+      });
+    }
+
+    drawGraph();
+  </script>
+</body>
+</html>

@@ -15,6 +15,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"github.com/yourusername/discord-referral-bot/suggestion"
 	"github.com/yourusername/discord-referral-bot/ai_service"
+	"net/http"
+	"github.com/yourusername/discord-referral-bot/api"
 )
 
 var (
@@ -32,6 +34,7 @@ func init() {
 
 func main() {
 	// Load environment variables
+
 	err := godotenv.Load()
 	if err != nil {
 		log.Fatalf("Error loading .env file: %v", err)
@@ -57,6 +60,10 @@ func main() {
 	usersCollection = db.Collection("users")
 	connectionsCollection = db.Collection("connections")
 	ratingsCollection = db.Collection("ratings")
+
+	http.Handle("/", http.FileServer(http.Dir("./web")))
+	http.Handle("/api/graph", api.GraphHandler(usersCollection, connectionsCollection, ctx))
+
 
 	// Create Discord bot with proper intents
 	botToken := os.Getenv("BOT_TOKEN")
@@ -87,6 +94,13 @@ func main() {
 	defer dg.Close()
 
 	fmt.Println("Bot is now running. Press CTRL-C to exit.")
+
+	go func() {
+		fmt.Println("🌐 Starting Web Server at http://localhost:8080")
+		log.Fatal(http.ListenAndServe(":8080", nil))
+	}()
+
+	
 	// Keep the bot running until CTRL-C is pressed
 	select {}
 }
